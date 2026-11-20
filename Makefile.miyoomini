@@ -1,0 +1,86 @@
+# PocketSNES for Miyoo Mini (Koriki) on the snes9x2005 core (libretro API, core/snes9x2005).
+#   make -f Makefile.miyoomini            release: snes9x2005 APU, SuperFX switch dispatch, PGO + LTO
+#   PLUS=1        snes9x2005 Plus (blargg APU: more accurate sound, ~10-40 % slower; no profile yet)
+#   PGO=0         without the profile; PGO=generate PGO_DIR=/abs/dir records a new one (see pgo/README.md)
+#   LTO=0         without LTO; NOSTRIP=1 keeps the symbols; CORE_EXTRA= drops -DFX_SWITCH_DISPATCH
+PLUS ?= 0
+PGO  ?= 1
+LTO  ?= 1
+CORE_EXTRA ?= -DFX_SWITCH_DISPATCH
+OPTLEVEL ?= -O3
+PGO_DIR ?= $(CURDIR)/pgo/miyoomini/$(PROFILE_NAME)
+
+TARGET ?= ./dist/PocketSNES
+TC ?= /opt/miyoomini-toolchain/usr/bin
+CROSS_COMPILE ?= $(TC)/arm-linux-gnueabihf-
+CC  := $(CROSS_COMPILE)gcc
+CXX := $(CROSS_COMPILE)g++
+STRIP := $(CROSS_COMPILE)strip
+SYSROOT := $(shell $(CC) --print-sysroot)
+
+# ---- core (untouched submodule; sources taken from its Makefile.common)
+CORE_DIR := core/snes9x2005/source
+LIBRETRO_DIR := core/snes9x2005
+LIBRETRO_COMM_DIR := $(LIBRETRO_DIR)/libretro-common
+USE_BLARGG_APU := $(PLUS)
+LOAD_FROM_MEMORY := 1
+FLAGS :=
+include $(LIBRETRO_DIR)/Makefile.common
+CORE_SRC := $(SOURCES_C)
+CORE_DEFS := $(FLAGS) -DLAGFIX -DNDEBUG -DFRONTEND_SUPPORTS_RGB565 $(CORE_EXTRA)
+
+ifeq ($(PLUS),1)
+PROFILE_NAME := plus
+else
+PROFILE_NAME := normal
+endif
+
+ARCH := -marm -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard
+OPT  := $(OPTLEVEL) -fomit-frame-pointer -fno-strict-aliasing -fdata-sections -ffunction-sections
+ifeq ($(LTO),1)
+OPT  += -flto=8 -fuse-linker-plugin
+endif
+ifeq ($(PGO),generate)
+OPT  += -fprofile-generate=$(PGO_DIR)
+else ifeq ($(PGO),1)
+OPT  += -fprofile-use=$(PGO_DIR) -fprofile-correction -Wno-coverage-mismatch
+endif
+
+# ---- frontend
+INCLUDE = -I menu -I sal/linux/include -I sal/include \
+	-I $(LIBRETRO_DIR) -I $(LIBRETRO_COMM_DIR)/include -I $(SYSROOT)/usr/include/SDL
+DEFS = $(if $(filter 1,$(PLUS)),-DUSE_BLARGG_APU) -DGCW_ZERO -DPG -DMIYOOMINI -DPOCKETSNES_LIBRETRO -D__LINUX__ \
+	-D_GNU_SOURCE=1 -D_REENTRANT
+FE_FLAGS = $(ARCH) $(OPT) $(INCLUDE) $(DEFS) -Wno-write-strings -Wno-sign-compare
+CORE_FLAGS = $(ARCH) $(OPT) $(CORE_DEFS) -Wno-implicit-function-declaration
+
+FE_CPP = $(wildcard menu/*.cpp)
+FE_C   = $(wildcard menu/*.c) $(wildcard sal/linux/*.c) $(wildcard sal/*.c)
+
+# generate and use must share the object paths (the .gcda names derive from them)
+BUILD := build/$(PROFILE_NAME)$(subst -,,$(OPTLEVEL))$(if $(filter-out 0,$(PGO)),pgo)
+OBJS = $(patsubst %.cpp,$(BUILD)/%.o,$(FE_CPP)) $(patsubst %.c,$(BUILD)/%.o,$(FE_C)) \
+	$(patsubst %.c,$(BUILD)/%.o,$(CORE_SRC))
+
+all: $(TARGET)
+$(TARGET): $(OBJS)
+	@mkdir -p $(dir $@)
+	$(CXX) $(ARCH) $(OPT) $^ -o $@ -lz -lpng12 -lSDL -lpthread -lm \
+		-Wl,--as-needed -Wl,--gc-sections
+ifeq ($(NOSTRIP)$(filter generate,$(PGO)),)
+	$(STRIP) $@
+endif
+
+$(BUILD)/core/%.o: core/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CORE_FLAGS) -c $< -o $@
+$(BUILD)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(FE_FLAGS) -c $< -o $@
+$(BUILD)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(FE_FLAGS) -std=gnu++11 -fno-exceptions -fno-rtti -c $< -o $@
+
+clean:
+	rm -rf build $(TARGET)
+.PHONY: all clean

@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <dirent.h>
 #include <SDL.h>
 #include <sys/time.h>
@@ -9,6 +11,27 @@
 #define SNES_HEIGHT 239
 
 SDL_Surface *mScreen = NULL;
+/* The menu is drawn into this RAM copy and written to the screen in one pass
+ * at flip time. Drawing it straight on the triple-buffered framebuffer
+ * (background first, then the text) could show a page between the two steps,
+ * which made the menu text flicker. The game (direct mode) writes each pixel
+ * once, so it keeps drawing straight to the screen with no extra copy. */
+static u8 *mShadow = NULL;
+static u32 mShadowSize = 0;
+static int mDirect = 0;
+
+static void ShadowUpdate(void)
+{
+	u32 size = mScreen ? mScreen->pitch * mScreen->h : 0;
+	if (size > mShadowSize)
+	{
+		free(mShadow);
+		mShadow = (u8 *) malloc(size);
+		mShadowSize = mShadow ? size : 0;
+	}
+	if (mShadow && mScreen)
+		memcpy(mShadow, mScreen->pixels, size);
+}
 static u32 mSoundThreadFlag=0;
 static u32 mSoundLastCpuSpeed=0;
 static u32 mPaletteBuffer[PALETTE_BUFFER_LENGTH];
@@ -39,8 +62,11 @@ static u32 sal_Input(int held)
 #ifdef RG350
 			case SDLK_HOME:
 #endif				
-#ifdef PG
+#if defined(PG) && !defined(MIYOOMINI)
 			case SDLK_RCTRL:
+#endif
+#ifdef MIYOOMINI
+			case SDLK_ESCAPE: /* MENU */
 #endif
 				extraKeys |= SAL_INPUT_MENU;
 				break;
@@ -52,6 +78,24 @@ static u32 sal_Input(int held)
 	inputHeld = 0;
 
 	u8 *keystate = SDL_GetKeyState(NULL);
+#ifdef MIYOOMINI
+	/* Miyoo Mini keys (Koriki SDL 1.2), same face layout as the SNES pad */
+	if ( keystate[SDLK_SPACE] )		inputHeld |= SAL_INPUT_A;	/* A */
+	if ( keystate[SDLK_LCTRL] )		inputHeld |= SAL_INPUT_B;	/* B */
+	if ( keystate[SDLK_LSHIFT] )	inputHeld |= SAL_INPUT_X;	/* X */
+	if ( keystate[SDLK_LALT] )		inputHeld |= SAL_INPUT_Y;	/* Y */
+	if ( keystate[SDLK_e] )			inputHeld |= SAL_INPUT_L;	/* L1 */
+	if ( keystate[SDLK_t] )			inputHeld |= SAL_INPUT_R;	/* R1 */
+	if ( keystate[SDLK_TAB] )		inputHeld |= SAL_INPUT_L;	/* L2 = L */
+	if ( keystate[SDLK_BACKSPACE] )	inputHeld |= SAL_INPUT_R;	/* R2 = R */
+	if ( keystate[SDLK_RETURN] )	inputHeld |= SAL_INPUT_START;	/* START */
+	if ( keystate[SDLK_RCTRL] )		inputHeld |= SAL_INPUT_SELECT;	/* SELECT */
+	if ( keystate[SDLK_UP] )		inputHeld |= SAL_INPUT_UP;	/* UP */
+	if ( keystate[SDLK_DOWN] )		inputHeld |= SAL_INPUT_DOWN;	/* DOWN */
+	if ( keystate[SDLK_LEFT] )		inputHeld |= SAL_INPUT_LEFT;	/* LEFT */
+	if ( keystate[SDLK_RIGHT] )		inputHeld |= SAL_INPUT_RIGHT;	/* RIGHT */
+	if ( keystate[SDLK_ESCAPE] )	inputHeld |= SAL_INPUT_MENU;	/* MENU */
+#else
 	if ( keystate[SDLK_LCTRL] )		inputHeld |= SAL_INPUT_A;
 	if ( keystate[SDLK_LALT] )		inputHeld |= SAL_INPUT_B;
 	if ( keystate[SDLK_SPACE] )		inputHeld |= SAL_INPUT_X;
@@ -70,6 +114,7 @@ static u32 sal_Input(int held)
 #ifdef PG
 	if ( keystate[SDLK_RCTRL] )		inputHeld |= SAL_INPUT_MENU;
 #endif
+#endif /* MIYOOMINI */
 	mInputRepeat = inputHeld;
 	return inputHeld | extraKeys;
 }
@@ -169,6 +214,8 @@ u32 sal_VideoInit(u32 bpp)
 	return SAL_ERROR;
 	}
 
+	mDirect = 0;
+	ShadowUpdate();
 	return SAL_OK;
 }
 
@@ -209,6 +256,7 @@ void sal_VideoEnterGame(u32 fullscreenOption, u32 pal, u32 refreshRate)
 	mRefreshRate = refreshRate;
 	if (SDL_MUSTLOCK(mScreen)) SDL_LockSurface(mScreen);
 #endif
+	mDirect = 1;
 }
 
 void sal_VideoSetPAL(u32 fullscreenOption, u32 pal)
@@ -232,6 +280,8 @@ void sal_VideoExitGame()
 		);
 	if (SDL_MUSTLOCK(mScreen)) SDL_LockSurface(mScreen);
 #endif
+	mDirect = 0;
+	ShadowUpdate();
 }
 
 void sal_VideoBitmapDim(u16* img, u32 pixelCount)
@@ -245,6 +295,8 @@ void sal_VideoBitmapDim(u16* img, u32 pixelCount)
 
 void sal_VideoFlip(s32 vsync)
 {
+	if (!mDirect && mShadow)
+		memcpy(mScreen->pixels, mShadow, mScreen->pitch * mScreen->h);
 	if (SDL_MUSTLOCK(mScreen)) SDL_UnlockSurface(mScreen);
 	SDL_Flip(mScreen);
 	if (SDL_MUSTLOCK(mScreen)) SDL_LockSurface(mScreen);
@@ -252,6 +304,8 @@ void sal_VideoFlip(s32 vsync)
 
 void *sal_VideoGetBuffer()
 {
+	if (!mDirect && mShadow)
+		return (void*)mShadow;
 	return (void*)mScreen->pixels;
 }
 

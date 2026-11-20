@@ -1,13 +1,16 @@
 #include <errno.h>
+#include <unistd.h>
 
 #include "sal.h"
 #include "menu.h"
-#include "snapshot.h"
-#include "snes9x.h"
-#include "gfx.h"
-#include "memmap.h"
-#include "soundux.h"
-#include "cheats.h"
+#include "core.h"
+
+#define SNES_WIDTH            CORE_WIDTH
+#define SNES_HEIGHT           CORE_HEIGHT
+#define SNES_HEIGHT_EXTENDED  CORE_HEIGHT_EXTENDED
+#define MAX_SFCCHEAT_NAME     CORE_CHEAT_NAME
+
+extern u16 *gPreviewTarget;
 
 #define MAX_DISPLAY_CHARS			40
 #define ROM_SELECTOR_SAVE_DEFAULT_DIR	0
@@ -51,7 +54,7 @@ void DefaultMenuOptions(void)
 	mMenuOptions->showFps=0;
 	// mMenuOptions->soundRate=22050; //44100;
 	mMenuOptions->soundRate=44100;
-	mMenuOptions->stereo=0;
+	mMenuOptions->stereo=1;
 	mMenuOptions->fullScreen=3;
 	mMenuOptions->autoSaveSram=1;
 	mMenuOptions->soundSync=1;
@@ -428,7 +431,7 @@ s32 FileSelect()
 	s8 previewPath[SAL_MAX_PATH];
 	s8 previousRom[SAL_MAX_PATH];
 	u16 romPreview[262 * 186];
-	bool8 havePreview = FALSE;
+	bool havePreview = false;
 	s32 action=0;
 	s32 smooth=0;
 	u16 color=0;
@@ -677,12 +680,12 @@ static void ScanSaveStates(s8 *romname)
 }
 
 static
-bool8 LoadStateTemp()
+int LoadStateTemp()
 {
 	char name[SAL_MAX_PATH];
-	bool8 ret;
+	int ret;
 	sprintf(name, "%s%s%s", sal_DirectoryGetTemp(), SAL_DIR_SEP, ".svt");
-	if (!(ret = S9xUnfreezeGame(name)))
+	if (!(ret = CoreStateLoad(name)))
 		fprintf(stderr, "Failed to read saved state at %s: %s\n", name, strerror(errno));
 	return ret;
 }
@@ -692,7 +695,7 @@ void SaveStateTemp()
 {
 	char name[SAL_MAX_PATH];
 	sprintf(name, "%s%s%s", sal_DirectoryGetTemp(), SAL_DIR_SEP, ".svt");
-	if (!S9xFreezeGame(name))
+	if (!CoreStateSave(name))
 		fprintf(stderr, "Failed to write saved state at %s: %s\n", name, strerror(errno));
 }
 
@@ -705,19 +708,19 @@ void DeleteStateTemp()
 }
 
 static
-bool8 LoadStateFile(s8 *filename)
+int LoadStateFile(s8 *filename)
 {
-	bool8 ret;
-	if (!(ret = S9xUnfreezeGame(filename)))
+	int ret;
+	if (!(ret = CoreStateLoad(filename)))
 		fprintf(stderr, "Failed to read saved state at %s: %s\n", filename, strerror(errno));
 	return ret;
 }
 
 static 
-bool8 SaveStateFile(s8 *filename)
+int SaveStateFile(s8 *filename)
 {
-	bool8 ret;
-	if (!(ret = S9xFreezeGame(filename)))
+	int ret;
+	if (!(ret = CoreStateSave(filename)))
 		fprintf(stderr, "Failed to write saved state at %s: %s\n", filename, strerror(errno));
 	return ret;
 }
@@ -865,15 +868,9 @@ static s32 SaveStateSelect(s32 mode)
 				{
 					// Loaded OK. Preview it by running the state for one frame.
 					mPreviewingState = 1;
-					sal_AudioSetMuted(1);
-					GFX.Screen = (uint8 *) &mTempFb[0];
-					// GFX.Screen = (uint8 *) sal_VideoGetBuffer();
-					IPPU.RenderThisFrame=TRUE;
-					unsigned int fullScreenSave = mMenuOptions->fullScreen;
-					mMenuOptions->fullScreen = 0;
-					S9xMainLoop ();
-					mMenuOptions->fullScreen = fullScreenSave;
-					sal_AudioSetMuted(0);
+					gPreviewTarget = &mTempFb[0];
+					CoreRunFrame(1);
+					gPreviewTarget = NULL;
 					mPreviewingState = 0;
 					action=5;
 				}
@@ -919,7 +916,6 @@ static s32 SaveStateSelect(s32 mode)
 	{
 		LoadStateTemp();
 	}
-	GFX.Screen = (uint8 *) sal_VideoGetBuffer();
 	DeleteStateTemp();
 	sal_InputIgnore();
 	return(action);
@@ -965,7 +961,11 @@ void ShowCredits()
 
 	strcpy(mMenuText[menuCount++],"PocketSNES - built " __DATE__);
 	strcpy(mMenuText[menuCount++],"-------------------------------------");
-	strcpy(mMenuText[menuCount++],"Based on Snes9x version " VERSION /* snes9x.h */);
+	strcpy(mMenuText[menuCount++],"Core: snes9x2005"
+#ifdef USE_BLARGG_APU
+		" Plus"
+#endif
+		" (libretro)");
 	strcpy(mMenuText[menuCount++],"PocketSNES created by Scott Ramsby");
 	strcpy(mMenuText[menuCount++],"Initial port to the Dingoo by Reesy");
 	strcpy(mMenuText[menuCount++],"Ported to OpenDingux by pcercuei");
@@ -973,6 +973,7 @@ void ShowCredits()
 	strcpy(mMenuText[menuCount++],"Port to RetroGame by Steward-Fu");
 	strcpy(mMenuText[menuCount++],"RetroGame optimizations by Sauce");
 	strcpy(mMenuText[menuCount++],"and pingflood");
+	strcpy(mMenuText[menuCount++],"Miyoo Mini (Koriki) by Ninoh-FOX");
 
 	sal_InputIgnore();
 	while (!menuExit)
@@ -1009,15 +1010,12 @@ void ShowCheats()
 	s32 menuExit=0,menuCount=0,menufocus=0,menuSmooth=0;
 	u32 keys=0;
 
-	for(int i=0;i<Cheat.num_cheats;i++){
-		if(Cheat.c[i].enabled){
-			char enableCheatName[MAX_SFCCHEAT_NAME + 1];
-			sprintf(enableCheatName, "%s%s", "*", Cheat.c[i].name);
-			strcpy(mMenuText[menuCount++],enableCheatName);
-		}else{
-			strcpy(mMenuText[menuCount++],Cheat.c[i].name);
-		}
+	/* mMenuText holds 30 lines */
+	for(unsigned i=0;i<CoreCheatCount() && menuCount<30;i++){
+		snprintf(mMenuText[menuCount++], MAX_DISPLAY_CHARS, "%s%s",
+			CoreCheatEnabled(i) ? "*" : "", CoreCheatName(i));
 	}
+	if (menuCount == 0) return;
 
 	sal_InputIgnore();
 	while (!menuExit)
@@ -1025,15 +1023,9 @@ void ShowCheats()
 		keys=sal_InputPollRepeat();
 		
 		if (keys & INP_BUTTON_MENU_SELECT){
-			if(!Cheat.c[menufocus].enabled){
-				S9xEnableCheat(menufocus);
-				char enableCheatName[MAX_SFCCHEAT_NAME + 1];
-				sprintf(enableCheatName, "%s%s", "*", Cheat.c[menufocus].name);
-				strcpy(mMenuText[menufocus],enableCheatName);
-			}else{
-				S9xDisableCheat(menufocus);
-				strcpy(mMenuText[menufocus],Cheat.c[menufocus].name);
-			}
+			CoreCheatToggle(menufocus);
+			snprintf(mMenuText[menufocus], MAX_DISPLAY_CHARS, "%s%s",
+				CoreCheatEnabled(menufocus) ? "*" : "", CoreCheatName(menufocus));
 		}
 		
 		if (keys & SAL_INPUT_UP) menufocus--; // Up

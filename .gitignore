@@ -6,3 +6,8 @@
 *.ipk
 *.elf
 profile/*
+
+# Koriki build
+/build/
+dist/PocketSNES
+dist/PocketSNES_*
