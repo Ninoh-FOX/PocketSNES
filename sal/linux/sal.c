@@ -32,6 +32,33 @@ static void ShadowUpdate(void)
 	if (mShadow && mScreen)
 		memcpy(mShadow, mScreen->pixels, size);
 }
+#ifdef MIYOOMINI
+/* Miyoo Mini SDL 1.2: SDL_Flip starts an asynchronous MI_GFX blit (scaled to
+ * 640x480) that reads the screen surface itself and returns at once. In
+ * hardware scaling the next 256 x h frame is memcpy'd into the surface faster
+ * than the blit reads it, so parts of two frames reach the screen (flicker).
+ * GFX_FLIPWAIT=1 (read by SDL_SetVideoMode) makes SDL_Flip wait for the
+ * pending blit and copy the surface to its own MMA buffer before blitting.
+ * Only the hardware mode needs it; the previous value is restored after. */
+static void FlipCopySet(int on)
+{
+	static int saved = 0;
+	static char *orig = NULL;
+	if (!saved)
+	{
+		const char *v = getenv("GFX_FLIPWAIT");
+		orig = v ? strdup(v) : NULL;
+		saved = 1;
+	}
+	if (on)
+		setenv("GFX_FLIPWAIT", "1", 1);
+	else if (orig)
+		setenv("GFX_FLIPWAIT", orig, 1);
+	else
+		unsetenv("GFX_FLIPWAIT");
+}
+#endif
+
 static u32 mSoundThreadFlag=0;
 static u32 mSoundLastCpuSpeed=0;
 static u32 mPaletteBuffer[PALETTE_BUFFER_LENGTH];
@@ -245,6 +272,9 @@ void sal_VideoEnterGame(u32 fullscreenOption, u32 pal, u32 refreshRate)
 		Width = SAL_SCREEN_WIDTH;
 		Height = SAL_SCREEN_HEIGHT;
 	}
+#ifdef MIYOOMINI
+	FlipCopySet(fullscreenOption == 3);
+#endif
 	if (SDL_MUSTLOCK(mScreen)) SDL_UnlockSurface(mScreen);
 	mScreen = SDL_SetVideoMode(Width, Height, mBpp, SDL_HWSURFACE |
 #ifdef SDL_TRIPLEBUF
@@ -269,6 +299,9 @@ void sal_VideoSetPAL(u32 fullscreenOption, u32 pal)
 
 void sal_VideoExitGame()
 {
+#ifdef MIYOOMINI
+	FlipCopySet(0);
+#endif
 #ifdef GCW_ZERO
 	if (SDL_MUSTLOCK(mScreen)) SDL_UnlockSurface(mScreen);
 	mScreen = SDL_SetVideoMode(SAL_SCREEN_WIDTH, SAL_SCREEN_HEIGHT, mBpp, SDL_HWSURFACE |
