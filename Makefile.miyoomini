@@ -51,8 +51,8 @@ INCLUDE = -I menu -I sal/linux/include -I sal/include \
 	-I $(LIBRETRO_DIR) -I $(LIBRETRO_COMM_DIR)/include -I $(SYSROOT)/usr/include/SDL
 DEFS = $(if $(filter 1,$(PLUS)),-DUSE_BLARGG_APU) -DGCW_ZERO -DPG -DMIYOOMINI -DPOCKETSNES_LIBRETRO -D__LINUX__ \
 	-D_GNU_SOURCE=1 -D_REENTRANT
-FE_FLAGS = $(ARCH) $(OPT) $(INCLUDE) $(DEFS) -Wno-write-strings -Wno-sign-compare
-CORE_FLAGS = $(ARCH) $(OPT) $(CORE_DEFS) -Wno-implicit-function-declaration
+FE_FLAGS = -MMD -MP $(ARCH) $(OPT) $(INCLUDE) $(DEFS) -Wno-write-strings -Wno-sign-compare
+CORE_FLAGS = -MMD -MP $(ARCH) $(OPT) $(CORE_DEFS) -Wno-implicit-function-declaration
 
 FE_CPP = $(wildcard menu/*.cpp)
 FE_C   = $(wildcard menu/*.c) $(wildcard sal/linux/*.c) $(wildcard sal/*.c)
@@ -80,6 +80,9 @@ $(BUILD)/%.o: %.c
 $(BUILD)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(FE_FLAGS) -std=gnu++11 -fno-exceptions -fno-rtti -c $< -o $@
+
+# header dependencies: a changed .h rebuilds every object that includes it
+-include $(OBJS:.o=.d)
 
 clean:
 	rm -rf build $(TARGET)
