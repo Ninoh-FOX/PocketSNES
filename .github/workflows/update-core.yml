@@ -9,17 +9,22 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Descargar repositorio y submódulo
-        uses: actions/checkout@v4
+      - name: Descargar repositorio
+        uses: actions/checkout@v5
         with:
           ref: koriki
-          submodules: recursive
+          submodules: false
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Actualizar submódulo core al último commit
+      - name: Actualizar submódulo core a la rama koriki
         run: |
-          git submodule update --remote core
+          git config --global url."https://github.com".insteadOf "git@github.com:"
+          git submodule sync
+          git submodule update --init --recursive
+          git -C core checkout koriki
+          git -C core pull origin koriki
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@://github.com"
           git add core
-          git commit -m "Update core submodule to latest commit" || exit 0
+          git commit -m "Update core submodule to latest koriki commit" || exit 0
           git push origin koriki
