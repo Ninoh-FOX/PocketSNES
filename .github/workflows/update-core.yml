@@ -1,0 +1,25 @@
+name: Actualizar Submódulo Core
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update-submodule:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Descargar repositorio y submódulo
+        uses: actions/checkout@v4
+        with:
+          ref: koriki
+          submodules: recursive
+
+      - name: Actualizar submódulo core al último commit
+        run: |
+          git submodule update --remote core
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@://github.com"
+          git add core
+          git commit -m "Update core submodule to latest commit" || exit 0
+          git push origin koriki
