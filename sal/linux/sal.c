@@ -206,7 +206,10 @@ u32 sal_CpuSpeedPreviousFast(u32 currSpeed)
 s32 sal_Init(void)
 {
 	setenv("SDL_NOMOUSE", "1", 1);
-	if( SDL_Init( SDL_INIT_VIDEO|SDL_INIT_TIMER|SDL_INIT_JOYSTICK ) == -1 )
+	/* No SDL_INIT_TIMER: PocketSNES uses no SDL timers, and with it SDL 1.2 starts a
+	 * timer thread whose SDL_Delay(1) loop spins a whole core on the Miyoo Mini (the
+	 * emulator lost CPU in heavy scenes and the sound ran dry: Star Fox intro). */
+	if( SDL_Init( SDL_INIT_VIDEO|SDL_INIT_JOYSTICK ) == -1 )
 	{
 		return SAL_ERROR;
 	}
