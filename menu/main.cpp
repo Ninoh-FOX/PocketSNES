@@ -343,11 +343,6 @@ int mainEntry(int argc, char* argv[])
 
 		if(event==EVENT_LOAD_ROM)
 		{
-			if (mRomName[0] != 0)
-			{
-				MenuMessageBox("Saving SRAM...","","",MENU_MESSAGE_BOX_MODE_MSG);
-				PSNESForceSaveSRAM();
-			}
 			if(SnesRomLoad() == SAL_ERROR)
 			{
 				mRomName[0] = 0;

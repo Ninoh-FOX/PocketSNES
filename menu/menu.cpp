@@ -1590,6 +1590,8 @@ s32 MenuRun(s8 *romName)
 					subaction=FileSelect();
 					if (subaction==1)
 					{
+						if (romName[0] != 0)
+							S9xSaveSRAM(0);
 						action=EVENT_LOAD_ROM;
 						strcpy(romName,mRomName);
 						MenuReloadOptions();
